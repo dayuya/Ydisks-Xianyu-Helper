@@ -1,0 +1,24 @@
+name: ydisks-browser-poc
+services:
+  browser:
+    image: jlesage/chromium@sha256:e42de7469bce122b8a69d4f62101850ece45c41ed7ed952f2b506f99947093ae
+    ports:
+      - "127.0.0.1:19388:5800"
+      - "127.0.0.1:19389:9222"
+    environment:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+      INSTALL_PACKAGES: font-noto-cjk
+      CHROMIUM_REMOTE_DEBUGGING: "1"
+      DISPLAY_WIDTH: "1440"
+      DISPLAY_HEIGHT: "900"
+      WEB_AUDIO: "0"
+      WEB_HOST_CLIPBOARD_SYNC: "0"
+      WEB_FILE_MANAGER: "0"
+      WEB_TERMINAL: "0"
+    volumes:
+      - browser_profile:/config
+    shm_size: 1gb
+    restart: unless-stopped
+volumes:
+  browser_profile:
