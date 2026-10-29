@@ -23,11 +23,21 @@ type SoldOrderFetcher interface {
 	FetchSoldOrdersPage(ctx context.Context, cookies string, pageNumber, pageSize int) (*SoldOrdersPage, error)
 }
 
+// SoldOrderCursorFetcher 是普通卖家分页的可选能力，游标和接口选择由单次同步的调用方独占。
+type SoldOrderCursorFetcher interface {
+	// FetchSoldOrdersPageWithCursor 读取 pageNumber 页；offsetRow 为上页游标，standardSeller 固定普通接口，ctx 控制取消，cookies 禁止输出。
+	FetchSoldOrdersPageWithCursor(ctx context.Context, cookies string, pageNumber, pageSize int, offsetRow int64, standardSeller bool) (*SoldOrdersPage, error)
+}
+
 // SoldOrdersPage 是一页卖家订单列表。
 type SoldOrdersPage struct {
 	Items      []SoldOrder
 	NextPage   bool
 	TotalCount int
+	// PreserveMissing 表示普通卖家列表的可见范围不能证明全部历史订单，调用方只能增量合并，不能清理缺失订单。
+	PreserveMissing bool
+	// NextOffset 是普通卖家接口返回的下一页位置；不能用已返回条数或页大小推算。
+	NextOffset int64
 }
 
 // SoldOrder 是订单列表可直接落库的字段。
@@ -55,6 +65,12 @@ var _ SoldOrderFetcher = (*ClientImpl)(nil)
 // 仅 HTTP 与平台均成功、必要结构合法且无订单丢失时返回页面和 nil；错误包含安全的平台错误码和原因。
 // 只有 MTOP 签名 Token 过期会刷新后重试，Session、风控和业务错误立即返回。
 func (c *ClientImpl) FetchSoldOrdersPage(ctx context.Context, cookies string, pageNumber, pageSize int) (*SoldOrdersPage, error) {
+	return c.FetchSoldOrdersPageWithCursor(ctx, cookies, pageNumber, pageSize, 0, false)
+}
+
+// FetchSoldOrdersPageWithCursor 读取指定页，offsetRow 与 standardSeller 由本次同步持有，不写入共享客户端。
+// 仅明确的卖家工作台权限错误允许切换普通接口；Token 重试和响应会话沿用既有边界。
+func (c *ClientImpl) FetchSoldOrdersPageWithCursor(ctx context.Context, cookies string, pageNumber, pageSize int, offsetRow int64, standardSeller bool) (*SoldOrdersPage, error) {
 	// currentCookies 保存本轮订单列表请求实际使用的 Cookie，不向日志或错误输出。
 	currentCookies := cookies
 	if // session 用于吸收没有显式会话调用方收到的 Set-Cookie。
@@ -67,8 +83,22 @@ func (c *ClientImpl) FetchSoldOrdersPage(ctx context.Context, cookies string, pa
 	var lastFailure error
 	for // attempt 表示含首次请求在内的重试序号。
 	attempt := 0; attempt < 4; attempt++ {
-		// page、err 保存一次订单列表请求的结果。
-		page, err := c.fetchSoldOrdersPageOnce(ctx, currentCookies, pageNumber, pageSize)
+		// page、err 保存本页结果与错误；普通卖家分页不得重新请求受限的工作台接口。
+		var page *SoldOrdersPage
+		// err 保留当前选定接口的失败，供既有 Token 分类和重试处理。
+		var err error
+		if !standardSeller {
+			page, err = c.fetchSoldOrdersPageOnce(ctx, currentCookies, pageNumber, pageSize)
+		}
+		if standardSeller || soldOrdersPermissionDenied(err) {
+			standardSeller = true
+			// session 保存回退前的最新请求会话，避免使用拒绝响应之前的旧签名。
+			if session := cookieSessionFromContext(ctx); session != nil {
+				// 会话可能在工作台拒绝响应中轮换，回退请求必须使用已经吸收的最新凭证。
+				currentCookies, _, _ = session.State()
+			}
+			page, err = c.fetchStandardSoldOrdersPageOnce(ctx, currentCookies, pageNumber, offsetRow)
+		}
 		if err == nil {
 			return page, nil
 		}

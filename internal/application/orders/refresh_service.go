@@ -75,6 +75,8 @@ type RefreshSoldFetchResult struct {
 	Orders []RefreshSoldOrder
 	// CookieUpdate 是请求期间观察到的 Cookie 会话变化。
 	CookieUpdate RefreshCookieUpdate
+	// PreserveMissing 表示可见范围受限，成功写入返回的订单后仍必须保留本地未返回的历史记录。
+	PreserveMissing bool
 }
 
 // RefreshCookieUpdate 描述平台请求观察到的 Cookie Jar 更新。
@@ -519,7 +521,7 @@ func (s *RefreshService) discoverAccount(ctx context.Context, userID int64, cook
 	}
 	// discovered、updated、result、remoteOrderIDs、writeErr 保存已提交统计、逐单明细、完整远端集合和写入失败。
 	discovered, updated, result, remoteOrderIDs, writeErr := s.persistSoldSnapshot(ctx, userID, cookieID, fetchResult.SellerID, fetchResult.Orders)
-	if writeErr == nil {
+	if writeErr == nil && !fetchResult.PreserveMissing {
 		// deleted、deleteErr 保存完整快照成功处理后的缺失清理结果，有冲突或写入失败时不清理。
 		deleted, deleteErr := s.repository.SoftDeleteMissingOrders(ctx, cookieID, remoteOrderIDs)
 		result.SoftDeleted = deleted

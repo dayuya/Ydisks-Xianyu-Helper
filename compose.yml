@@ -36,7 +36,7 @@ services:
 
   app:
     image: ${XIANYU_IMAGE:-ghcr.io/christ9038/ydisks-xianyu-helper:latest}
-    pull_policy: always
+    pull_policy: ${XIANYU_PULL_POLICY:-always}
     restart: unless-stopped
     depends_on:
       postgres:

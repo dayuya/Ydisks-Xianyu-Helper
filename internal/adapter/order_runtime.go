@@ -313,6 +313,8 @@ func (r *OrderRuntime) FetchSoldOrders(ctx context.Context, detail *orderapp.Pla
 	requestCtx, session := withOrderCookieSnapshot(ctx, platformRuntimeDataForOrder(detail))
 	// orders 保存跨分页累积的平台订单。
 	orders := make([]orderapp.RefreshSoldOrder, 0)
+	// preserveMissing 与 nextOffset 仅由当前同步循环拥有，记录普通卖家可见范围及下一页位置。
+	preserveMissing, nextOffset := false, int64(0)
 	// sellerID 保存已观察到的请求 UID，identityComplete 要求每一页都具备可验证的相同身份。
 	sellerID, identityComplete := "", true
 	// pageNumber 是当前请求的订单列表页码。
@@ -331,13 +333,22 @@ func (r *OrderRuntime) FetchSoldOrders(ctx context.Context, detail *orderapp.Pla
 			sellerID = requestSellerID
 		}
 		// page、callErr 保存当前订单列表页及错误。
-		page, callErr := fetcher.FetchSoldOrdersPage(requestCtx, detail.Value, pageNumber, 30)
+		var page *mtop.SoldOrdersPage
+		// callErr 保留当前分页请求错误，失败时拒绝把此前页面作为完整结果提交。
+		var callErr error
+		// cursorFetcher、supportsCursor 判断实际客户端是否支持普通卖家游标；旧替身保留原契约。
+		if cursorFetcher, supportsCursor := fetcher.(mtop.SoldOrderCursorFetcher); supportsCursor {
+			page, callErr = cursorFetcher.FetchSoldOrdersPageWithCursor(requestCtx, detail.Value, pageNumber, 30, nextOffset, preserveMissing)
+		} else {
+			page, callErr = fetcher.FetchSoldOrdersPage(requestCtx, detail.Value, pageNumber, 30)
+		}
 		if callErr != nil {
 			return orderapp.RefreshSoldFetchResult{Orders: orders, CookieUpdate: orderCookieUpdate(detail, session)}, callErr
 		}
 		if page == nil {
 			return orderapp.RefreshSoldFetchResult{Orders: orders, CookieUpdate: orderCookieUpdate(detail, session)}, errors.New("订单列表接口未返回结果")
 		}
+		preserveMissing = preserveMissing || page.PreserveMissing
 		// remote 是当前平台订单列表项。
 		for _, remote := range page.Items {
 			if strings.TrimSpace(remote.OrderID) == "" {
@@ -349,7 +360,13 @@ func (r *OrderRuntime) FetchSoldOrders(ctx context.Context, detail *orderapp.Pla
 			if !identityComplete {
 				sellerID = ""
 			}
-			return orderapp.RefreshSoldFetchResult{SellerID: sellerID, Orders: orders, CookieUpdate: orderCookieUpdate(detail, session)}, nil
+			return orderapp.RefreshSoldFetchResult{SellerID: sellerID, Orders: orders, CookieUpdate: orderCookieUpdate(detail, session), PreserveMissing: preserveMissing}, nil
+		}
+		if preserveMissing {
+			if page.NextOffset <= nextOffset {
+				return orderapp.RefreshSoldFetchResult{Orders: orders, CookieUpdate: orderCookieUpdate(detail, session)}, errors.New("普通卖家订单分页游标未前进")
+			}
+			nextOffset = page.NextOffset
 		}
 		if len(page.Items) == 0 {
 			return orderapp.RefreshSoldFetchResult{Orders: orders, CookieUpdate: orderCookieUpdate(detail, session)}, fmt.Errorf("订单列表第 %d 页为空页但 nextPage 为真，分页不完整", pageNumber)

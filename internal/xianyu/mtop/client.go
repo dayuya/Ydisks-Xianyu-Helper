@@ -80,15 +80,17 @@ type ClientImpl struct {
 	// FreeShippingURL 覆盖砍价订单免拼发货端点，仅供本地 HTTP 回归测试注入替身；空值使用官方端点。
 	FreeShippingURL string
 	// AdjustPriceURL 覆盖订单改价端点，仅供测试注入本地 HTTP 服务。
-	AdjustPriceURL      string
-	OrderDetailURL      string
-	SoldOrdersURL       string
-	LoginUserURL        string
-	RateCreateURL       string
-	RateListURL         string
-	PolishItemURL       string
-	PolishItemBackupURL string
-	ChatUserQueryURL    string
+	AdjustPriceURL string
+	OrderDetailURL string
+	SoldOrdersURL  string
+	// StandardSoldOrdersURL 仅供本地测试覆盖普通卖家订单端点；生产空值固定使用官方接口。
+	StandardSoldOrdersURL string
+	LoginUserURL          string
+	RateCreateURL         string
+	RateListURL           string
+	PolishItemURL         string
+	PolishItemBackupURL   string
+	ChatUserQueryURL      string
 	// ChatItemSearchURL 允许测试将聊天商品查询指向本地 HTTP 服务；生产空值使用官方端点。
 	ChatItemSearchURL string
 }
